@@ -76,7 +76,7 @@ def _read(path: FileRef, layer: str, max_features: int | None = None) -> gpd.Geo
     return gpd.read_file(path.local_path(), engine="pyogrio", **kwargs)
 
 
-@node(category="Geo/Vector", title="Read Vector File")
+@node(category="Geo/Vector", title="Read Vector File", converter=True)
 def read_vector(
     path: VectorFile,
     layer: Annotated[str, Param(description="For GeoPackages with several layers")] = "",

@@ -27,6 +27,7 @@ from noodlelab import (
     register_sampler,
     register_type,
 )
+from noodlelab.core.meta import numeric_columns
 
 GDF = "geopandas.geodataframe.GeoDataFrame"
 
@@ -283,6 +284,7 @@ def _gdf_meta(gdf: gpd.GeoDataFrame) -> dict[str, Any]:
         "crs": crs_label(gdf.crs),
         "geometry": geometry_types(gdf),
         "dtypes": {str(c): str(t) for c, t in list(gdf.dtypes.items())[:500]},
+        "numeric": numeric_columns(gdf),
     }
 
 

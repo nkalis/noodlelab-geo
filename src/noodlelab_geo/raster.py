@@ -15,6 +15,7 @@ import shapely
 from numpy.typing import NDArray
 
 from noodlelab import FileRef, Param, Probe, RunContext, node, warning
+from noodlelab.core.meta import numeric_columns
 
 from .types import Raster, crs_label, crs_string, metric, same_crs
 
@@ -80,7 +81,7 @@ def _prj_crs(path: FileRef) -> str | None:
     return crs_string(pyproj.CRS.from_wkt(prj.read_text()))
 
 
-@node(category="Geo/Raster", title="Read ASCII Grid")
+@node(category="Geo/Raster", title="Read ASCII Grid", converter=True)
 def read_ascii_grid(
     path: AsciiGrid,
     crs: Annotated[str, Param(description="EPSG code; empty: from the .prj file next to it")] = "",
@@ -502,7 +503,7 @@ def _grid_for(
 @node(category="Geo/Raster", title="IDW Interpolation")
 def idw_interpolation(
     points: gpd.GeoDataFrame,
-    value: Annotated[str, Param(options_from="points.columns")] = "",
+    value: Annotated[str, Param(options_from="points.numeric")] = "",
     template: Raster | None = None,
     cell: Annotated[
         float, Param(min=0.0, description="Cell size in metres, without a template")
@@ -527,6 +528,11 @@ def idw_interpolation(
     xy = np.column_stack([pts.geometry.x.to_numpy()[ok], pts.geometry.y.to_numpy()[ok]])
     v = v[ok]
     if len(v) == 0:
+        if pts[value].notna().any():
+            raise TypeError(
+                f"Column '{value}' is not numeric; numeric columns: "
+                + (", ".join(numeric_columns(points)) or "none")
+            )
         raise ValueError("No points with a value")
     grid = _grid_for(pts, cell, padding, template)
     xs, ys = grid.centers()
@@ -560,7 +566,7 @@ def point_density(
         float, Param(min=0.0, description="Metres added around the points")
     ] = 10000.0,
     weight: Annotated[
-        str, Param(options_from="points.columns", empty="none", description="Weight column")
+        str, Param(options_from="points.numeric", empty="none", description="Weight column")
     ] = "",
 ) -> Raster:
     """Kernel density: how many points (or how much weight) per km², smoothed

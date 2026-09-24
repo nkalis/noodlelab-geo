@@ -129,7 +129,7 @@ def map_plot(
     ] = "",
     point_size: Annotated[float, Param(min=1, max=200)] = 18.0,
     size_by: Annotated[
-        str, Param(options_from="points.columns", empty="same size", description="Scale by column")
+        str, Param(options_from="points.numeric", empty="same size", description="Scale by column")
     ] = "",
     raster_colormap: RasterColormap = "viridis",
     class_colors: Annotated[
