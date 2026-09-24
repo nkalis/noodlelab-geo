@@ -14,7 +14,7 @@ import pyproj
 
 from noodlelab import FileRef, Param, Probe, Quantity, RunContext, node, warning
 
-from .types import crs_label, geometry_types, metric
+from .types import coordinate_columns, crs_label, geometry_types, metric
 
 __all__ = [
     "add_coordinates",
@@ -132,6 +132,11 @@ def as_features(
     )
 
 
+@as_features.accepts
+def _as_features_fits(table: pd.DataFrame) -> bool:
+    return isinstance(table, gpd.GeoDataFrame) or "geometry" in table.columns
+
+
 @node(category="Geo/Vector", title="Points From Table", converter=True)
 def points_from_table(
     table: pd.DataFrame,
@@ -149,6 +154,22 @@ def points_from_table(
     ok = (xs.notna() & ys.notna()).to_numpy()
     rows = table.loc[ok].reset_index(drop=True)
     return gpd.GeoDataFrame(rows, geometry=gpd.points_from_xy(xs[ok], ys[ok]), crs=parse_crs(crs))
+
+
+@points_from_table.accepts
+def _points_fit(table: pd.DataFrame) -> dict[str, str] | None:
+    """Tables with coordinate columns, and which they are. Coordinates outside
+    ±180/±90 are projected: the CRS is left for the user to choose."""
+    if isinstance(table, gpd.GeoDataFrame):
+        return None
+    found = coordinate_columns(table)
+    if found is None:
+        return None
+    x, y = found
+    xs = pd.to_numeric(table[x], errors="coerce").abs()
+    ys = pd.to_numeric(table[y], errors="coerce").abs()
+    geographic = bool((xs <= 180).all() and (ys <= 90).all())
+    return {"x": x, "y": y} if geographic else {"x": x, "y": y, "crs": ""}
 
 
 @points_from_table.check
