@@ -1,0 +1,38 @@
+"""Geospatial nodes. Requires the ``geo`` extra: ``pip install "noodlelab[geo]"``.
+
+Vector data are GeoPandas ``GeoDataFrame`` values: a table with a geometry
+column and a coordinate reference system (CRS). A GeoDataFrame connects to
+every table input too. Rasters are :class:`~.types.Raster` values: a NumPy grid
+with its position, cell size and CRS, read from and written to ESRI ASCII
+grids (``.asc``, with an optional ``.prj`` for the CRS).
+
+Distances, buffers and areas are computed in metres: data in longitude and
+latitude is projected to its UTM zone for the calculation, so no node asks
+for a projected CRS first.
+
+* :mod:`.vector`: reading, projecting, buffering, joining, measuring
+* :mod:`.raster`: terrain, indices, classification, interpolation, zonal statistics
+* :mod:`.track`: GPS tracks
+* :mod:`.seismology`: earthquake catalogues
+* :mod:`.plot`: maps
+"""
+
+from __future__ import annotations
+
+try:
+    import geopandas  # noqa: F401
+    import matplotlib  # noqa: F401
+    import pyproj  # noqa: F401
+    import scipy  # noqa: F401
+    import shapely  # noqa: F401
+except ImportError as exc:  # shown in the editor's pack errors
+    raise ImportError(
+        f'{exc.name} is not installed. Install the geo extra: uv pip install "noodlelab[geo]"'
+    ) from exc
+
+from .plot import *  # noqa: F403
+from .raster import *  # noqa: F403
+from .seismology import *  # noqa: F403
+from .track import *  # noqa: F403
+from .types import Raster  # noqa: F401
+from .vector import *  # noqa: F403
