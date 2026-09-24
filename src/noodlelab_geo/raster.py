@@ -17,7 +17,7 @@ from numpy.typing import NDArray
 from noodlelab import FileRef, Param, Probe, RunContext, node, warning
 from noodlelab.core.meta import numeric_columns
 
-from .types import Raster, crs_label, crs_string, metric, same_crs
+from .types import X_NAMES, Y_NAMES, Raster, crs_label, crs_string, metric, same_crs
 
 __all__ = [
     "classify",
@@ -500,7 +500,7 @@ def _grid_for(
     )
 
 
-@node(category="Geo/Raster", title="IDW Interpolation")
+@node(category="Geo/Raster", title="IDW Interpolation", converter=True, cost=3.0)
 def idw_interpolation(
     points: gpd.GeoDataFrame,
     value: Annotated[str, Param(options_from="points.numeric")] = "",
@@ -548,13 +548,25 @@ def idw_interpolation(
     return grid.like(est.reshape(grid.data.shape), name or value)
 
 
+@idw_interpolation.accepts
+def _idw_fits(points: gpd.GeoDataFrame) -> dict[str, str] | None:
+    """Points with a numeric column to interpolate: the first that is not a
+    coordinate or an id."""
+    coords = {*X_NAMES, *Y_NAMES}
+    columns = [c for c in numeric_columns(points) if c.strip().lower() not in coords]
+    if not columns:
+        return None
+    ids = [c for c in columns if c.strip().lower() == "id" or c.strip().lower().endswith("_id")]
+    return {"value": next((c for c in columns if c not in ids), columns[0])}
+
+
 @idw_interpolation.check
 def _check_idw(value: str = ""):
     if not value.strip():
         return "Choose the column to interpolate"
 
 
-@node(category="Geo/Raster", title="Point Density")
+@node(category="Geo/Raster", title="Point Density", converter=True, cost=4.0)
 def point_density(
     points: gpd.GeoDataFrame,
     template: Raster | None = None,

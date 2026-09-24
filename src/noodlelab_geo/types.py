@@ -15,6 +15,7 @@ from typing import IO, Any
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import pyproj
 from numpy.typing import NDArray
 
@@ -149,6 +150,31 @@ def crs_string(crs: Any) -> str | None:
 
 def is_geographic(crs: Any) -> bool:
     return crs is not None and pyproj.CRS.from_user_input(crs).is_geographic
+
+
+X_NAMES = ("lon", "longitude", "long", "lng", "x", "easting", "east", "x_coord", "xcoord")
+Y_NAMES = ("lat", "latitude", "y", "northing", "north", "y_coord", "ycoord")
+
+
+def _numeric_share(values: Any) -> float:
+    return float(pd.to_numeric(values, errors="coerce").notna().mean()) if len(values) else 0.0
+
+
+def coordinate_columns(table: Any) -> tuple[str, str] | None:
+    """The columns of a table that hold x and y (or longitude and latitude)
+    coordinates, found by name ("lon", "Latitude", "easting"...) and numeric
+    content; None when there are none."""
+    by_name = {str(c).strip().lower().replace(" ", "_"): c for c in table.columns}
+
+    def find(names: tuple[str, ...]) -> Any:
+        for n in names:
+            c = by_name.get(n)
+            if c is not None and _numeric_share(table[c]) >= 0.5:
+                return c
+        return None
+
+    x, y = find(X_NAMES), find(Y_NAMES)
+    return None if x is None or y is None else (str(x), str(y))
 
 
 def metric(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
