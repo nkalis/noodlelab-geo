@@ -18,7 +18,16 @@ from numpy.typing import NDArray
 from noodlelab import FileRef, Param, Probe, RunContext, node, warning
 from noodlelab.core.meta import numeric_columns
 
-from .types import X_NAMES, Y_NAMES, Raster, crs_label, crs_string, metric, same_crs
+from .types import (
+    X_NAMES,
+    Y_NAMES,
+    Raster,
+    crs_label,
+    crs_string,
+    is_geographic,
+    metric,
+    same_crs,
+)
 
 __all__ = [
     "classify",
@@ -107,7 +116,7 @@ def read_ascii_grid(
         data[data == header["nodata_value"]] = np.nan
     x0 = header.get("xllcorner", header.get("xllcenter", 0.0) - cell / 2)
     y_south = header.get("yllcorner", header.get("yllcenter", 0.0) - cell / 2)
-    ref = crs_string(pyproj.CRS.from_user_input(crs)) if crs.strip() else _prj_crs(path)
+    ref = crs_string(crs) if crs.strip() else _prj_crs(path)
     return Raster(
         data,
         float(x0),
@@ -200,8 +209,7 @@ def _from_rasterio(src: Any, data: Any, band: int, name: str, scale: float = 1.0
     nodata = src.nodatavals[band - 1]
     if nodata is not None and not np.isnan(nodata):
         data[np.isclose(data, nodata)] = np.nan
-    if data.dtype.kind == "f":
-        data[~np.isfinite(data)] = np.nan
+    data[~np.isfinite(data)] = np.nan
     t = src.transform
     x0, y0, cell = t.c, t.f, abs(t.a) * scale
     if t.e > 0:  # south-up: flip into the north-up layout Raster uses
@@ -346,7 +354,7 @@ def raster_math(
     with np.errstate(divide="ignore", invalid="ignore"):
         out = ops[operation](a.data, other).astype(np.float64)
     if operation in ("greater than", "less than", "equal"):
-        out[~np.isfinite(a.data)] = np.nan
+        out[~(np.isfinite(a.data) & np.isfinite(other))] = np.nan
     return a.like(out, name or f"{a.name} {operation}")
 
 
@@ -393,7 +401,7 @@ def slope_aspect(
 
 @slope_aspect.check
 def _check_slope(dem: Raster | None = None):
-    if dem is not None and dem.crs and pyproj.CRS.from_user_input(dem.crs).is_geographic:
+    if dem is not None and is_geographic(dem.crs):
         return warning("The DEM is in degrees: slopes need a projected CRS (metres)")
     return None
 
@@ -563,6 +571,16 @@ def _to_raster_crs(data: gpd.GeoDataFrame, raster: Raster) -> gpd.GeoDataFrame:
     return data
 
 
+def _cell_index(raster: Raster, pts: gpd.GeoDataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Row and column of the cell under each point, and whether it is on the grid."""
+    # floor, not int(): truncation towards zero would put points up to a cell
+    # west or north of the grid into its edge cells
+    col = np.floor((pts.geometry.x.to_numpy() - raster.x0) / raster.cell).astype(int)
+    row = np.floor((raster.y0 - pts.geometry.y.to_numpy()) / raster.cell).astype(int)
+    ok = (row >= 0) & (row < raster.rows) & (col >= 0) & (col < raster.cols)
+    return row, col, ok
+
+
 def _polygon_mask(raster: Raster, geometry: Any) -> np.ndarray:
     """True for cells whose centre lies in the geometry."""
     xs, ys = raster.centers()
@@ -582,11 +600,8 @@ def sample_raster(
 ) -> gpd.GeoDataFrame:
     """Add the raster value under each point as a column (the cell the point
     falls in; NaN outside the grid)."""
-    pts = _to_raster_crs(points, raster)
-    col = ((pts.geometry.x.to_numpy() - raster.x0) / raster.cell).astype(int)
-    row = ((raster.y0 - pts.geometry.y.to_numpy()) / raster.cell).astype(int)
-    ok = (row >= 0) & (row < raster.rows) & (col >= 0) & (col < raster.cols)
-    values = np.full(len(pts), np.nan)
+    row, col, ok = _cell_index(raster, _to_raster_crs(points, raster))
+    values = np.full(len(points), np.nan)
     values[ok] = raster.data[row[ok], col[ok]]
     out = points.copy()
     out[name or raster.name or "value"] = values
@@ -716,9 +731,7 @@ def point_density(
         if weight.strip()
         else np.ones(len(pts))
     )
-    col = ((pts.geometry.x.to_numpy() - grid.x0) / grid.cell).astype(int)
-    row = ((grid.y0 - pts.geometry.y.to_numpy()) / grid.cell).astype(int)
-    ok = (row >= 0) & (row < grid.rows) & (col >= 0) & (col < grid.cols)
+    row, col, ok = _cell_index(grid, pts)
     counts = np.zeros(grid.data.shape)
     np.add.at(counts, (row[ok], col[ok]), w_vals[ok])
     smooth = gaussian_filter(counts, sigma=max(bandwidth / grid.cell, 0.01), mode="constant")
