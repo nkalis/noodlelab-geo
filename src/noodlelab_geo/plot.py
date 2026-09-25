@@ -43,7 +43,7 @@ Categorical = (
 
 def _nice(length: float) -> float:
     exp = np.floor(np.log10(length))
-    for f in (5, 2, 1):
+    for f in (5, 2):
         if f * 10**exp <= length:
             return float(f * 10**exp)
     return float(10**exp)

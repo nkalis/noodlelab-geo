@@ -57,14 +57,19 @@ def _crs_problem(text: str, allow_utm: bool = False) -> str | None:
     if allow_utm and text.strip().lower() in _UTM:
         return None
     try:
-        pyproj.CRS.from_user_input(text.strip())
-    except pyproj.exceptions.CRSError:
-        return f"Unknown CRS '{text}': use an EPSG code such as EPSG:4326 or EPSG:32632"
+        parse_crs(text)
+    except ValueError as exc:
+        return str(exc)
     return None
 
 
-def _column(source: str = "data", **kw) -> Param:
-    return Param(options_from=f"{source}.columns", **kw)
+def _metres(distance: Quantity | float) -> float:
+    return float(distance.m_as("m")) if hasattr(distance, "m_as") else float(distance)
+
+
+def _parse_condition(condition: str) -> None:
+    # backquoted column names may hold spaces or symbols that are not Python
+    ast.parse(re.sub(r"`[^`]*`", "x", condition), mode="eval")
 
 
 # --- reading and writing --------------------------------------------------------------------
@@ -235,8 +240,7 @@ def filter_features(
     ] = "",
 ) -> gpd.GeoDataFrame:
     """Keep the features matching a condition on their attributes."""
-    plain = re.sub(r"`[^`]*`", "x", condition)
-    ast.parse(plain, mode="eval")
+    _parse_condition(condition)
     return data.query(condition, engine="python").reset_index(drop=True)
 
 
@@ -245,7 +249,7 @@ def _check_filter(condition: str = ""):
     if not condition.strip():
         return "Enter a condition"
     try:
-        ast.parse(re.sub(r"`[^`]*`", "x", condition), mode="eval")
+        _parse_condition(condition)
     except SyntaxError as exc:
         return f"Not a valid condition: {exc.msg}"
     return None
@@ -270,7 +274,7 @@ def buffer(
     around a river. Computed in metres whatever the CRS; the result is in the
     input's CRS."""
     m = metric(data)
-    d = float(distance.m_as("m")) if hasattr(distance, "m_as") else float(distance)
+    d = _metres(distance)
     out = m.copy()
     out["geometry"] = m.buffer(d, resolution=16)
     if merge:
@@ -294,7 +298,12 @@ def centroids(data: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 def dissolve(
     data: gpd.GeoDataFrame,
     by: Annotated[
-        str, _column(empty="all features", description="Merge features with the same value")
+        str,
+        Param(
+            options_from="data.columns",
+            empty="all features",
+            description="Merge features with the same value",
+        ),
     ] = "",
     aggregate: Literal["first", "sum", "mean", "min", "max", "count"] = "sum",
 ) -> gpd.GeoDataFrame:
@@ -363,11 +372,8 @@ def spatial_join(
     if relation == "nearest":
         lm = metric(left)
         rm = r.to_crs(lm.crs)
-        limit = (
-            float(max_distance.m_as("m")) if hasattr(max_distance, "m_as") else float(max_distance)
-        )
         joined = gpd.sjoin_nearest(
-            lm, rm, how=how, max_distance=limit or None, distance_col="distance_m"
+            lm, rm, how=how, max_distance=_metres(max_distance) or None, distance_col="distance_m"
         )
         joined = joined.to_crs(left.crs)
     else:

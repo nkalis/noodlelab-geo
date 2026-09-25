@@ -8,8 +8,11 @@ needs no pickle.
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 from typing import IO, Any
 
@@ -17,6 +20,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pyproj
+import shapely
 from numpy.typing import NDArray
 
 from noodlelab import (
@@ -273,8 +277,42 @@ def geometry_types(gdf: gpd.GeoDataFrame) -> list[str]:
     return sorted({str(t) for t in gdf.geom_type.dropna().unique()})
 
 
+# bump when the drawing changes, so cached thumbnails are not reused
+_THUMB_VERSION = 1
+_THUMBS_MAX = 64
+_thumbs: OrderedDict[tuple[Any, ...], str] = OrderedDict()
+_thumbs_lock = threading.Lock()
+
+
+def _thumb_key(gdf: gpd.GeoDataFrame, size: float) -> tuple[Any, ...]:
+    # everything the drawing depends on: the geometries in row order, the CRS, the size
+    h = hashlib.sha1()
+    for wkb in shapely.to_wkb(np.asarray(gdf.geometry.values)):
+        h.update(b"\xff" * 8 if wkb is None else len(wkb).to_bytes(8, "little") + wkb)
+    crs = gdf.crs
+    wkt = crs.to_wkt() if crs is not None else None
+    geographic = crs is not None and crs.is_geographic
+    return (h.hexdigest(), wkt, geographic, float(size), _THUMB_VERSION)
+
+
 def map_thumbnail(gdf: gpd.GeoDataFrame, size: float = 3.0) -> str:
-    """A small map of the features as a PNG data URL."""
+    """A small map of the features as a PNG data URL (the last few are cached)."""
+    key = _thumb_key(gdf, size)
+    with _thumbs_lock:
+        url = _thumbs.get(key)
+        if url is not None:
+            _thumbs.move_to_end(key)
+            return url
+    url = _draw_thumbnail(gdf, size)
+    with _thumbs_lock:
+        _thumbs[key] = url
+        _thumbs.move_to_end(key)
+        while len(_thumbs) > _THUMBS_MAX:
+            _thumbs.popitem(last=False)
+    return url
+
+
+def _draw_thumbnail(gdf: gpd.GeoDataFrame, size: float) -> str:
     from matplotlib.figure import Figure
 
     fig = Figure(figsize=(size, size), layout="constrained")
