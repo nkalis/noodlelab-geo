@@ -1,5 +1,6 @@
-"""Rasters: grids read from ESRI ASCII files, terrain analysis, indices,
-classification, interpolation from points, and statistics per zone."""
+"""Rasters: grids read from GeoTIFF (and other GDAL formats) or ESRI ASCII
+files, terrain analysis, indices, classification, interpolation from points,
+and statistics per zone."""
 
 from __future__ import annotations
 
@@ -31,8 +32,10 @@ __all__ = [
     "raster_statistics",
     "raster_values",
     "read_ascii_grid",
+    "read_raster",
     "sample_raster",
     "save_ascii_grid",
+    "save_geotiff",
     "slope_aspect",
     "zonal_statistics",
 ]
@@ -161,6 +164,126 @@ def save_ascii_grid(
         out.with_suffix(".prj").write_text(
             pyproj.CRS.from_user_input(raster.crs).to_wkt("WKT1_ESRI")
         )
+    ctx.log(f"Wrote {out.name}")
+    return out
+
+
+# --- GeoTIFF and other GDAL rasters (rasterio) ------------------------------------------------
+
+RasterFile = Annotated[FileRef, Param(accept=(".tif", ".tiff", ".vrt", ".img", ".jp2", ".nc"))]
+PREVIEW_SIDE = 512  # cells along the longer side of a probe's preview
+
+
+def _rasterio() -> Any:
+    try:
+        import rasterio
+    except ImportError as exc:
+        raise ImportError(
+            'Reading GeoTIFFs needs rasterio: uv pip install "noodlelab[geo]"'
+        ) from exc
+    return rasterio
+
+
+def _band_problem(src: Any, band: int) -> str | None:
+    if not 1 <= band <= src.count:
+        return f"Band {band} does not exist: the file has {src.count} band(s)"
+    t = src.transform
+    if t.b or t.d:
+        return "The grid is rotated; only north-up rasters are supported (warp it first)"
+    if not np.isclose(abs(t.a), abs(t.e), rtol=1e-6):
+        return f"Cells are not square ({abs(t.a):g} × {abs(t.e):g}); resample it first"
+    return None
+
+
+def _from_rasterio(src: Any, data: Any, band: int, name: str, scale: float = 1.0) -> Raster:
+    data = np.asarray(data, dtype=np.float64)
+    nodata = src.nodatavals[band - 1]
+    if nodata is not None and not np.isnan(nodata):
+        data[np.isclose(data, nodata)] = np.nan
+    if data.dtype.kind == "f":
+        data[~np.isfinite(data)] = np.nan
+    t = src.transform
+    x0, y0, cell = t.c, t.f, abs(t.a) * scale
+    if t.e > 0:  # south-up: flip into the north-up layout Raster uses
+        data, y0 = data[::-1], t.f + t.e * src.height
+    crs = crs_string(src.crs.to_wkt()) if src.crs else None
+    return Raster(data, float(x0), float(y0), float(cell), crs, name)
+
+
+@node(category="Geo/Raster", title="Read Raster", converter=True)
+def read_raster(
+    path: RasterFile,
+    band: Annotated[int, Param(min=1, description="Which band, from 1")] = 1,
+    name: str = "",
+) -> Raster:
+    """Read one band of a GeoTIFF, or of any raster GDAL reads (.vrt, .img,
+    .jp2, NetCDF...), as a grid of floats. No-data cells become NaN, and the
+    CRS comes from the file."""
+    rasterio = _rasterio()
+    with rasterio.open(path.local_path()) as src:
+        problem = _band_problem(src, band)
+        if problem:
+            raise ValueError(problem)
+        data = src.read(band, masked=False)
+        desc = src.descriptions[band - 1] if src.descriptions else None
+        return _from_rasterio(src, data, band, name or desc or Path(path.name).stem)
+
+
+@read_raster.probe
+def _probe_raster(path: FileRef, band: int = 1, name: str = ""):
+    rasterio = _rasterio()
+    with rasterio.open(path.local_path()) as src:
+        problem = _band_problem(src, band)
+        if problem:
+            raise ValueError(problem)
+        # a reduced read: GDAL uses the file's overviews when it has them
+        scale = max(1.0, max(src.width, src.height) / PREVIEW_SIDE)
+        shape = (max(1, round(src.height / scale)), max(1, round(src.width / scale)))
+        data = src.read(band, out_shape=shape, masked=False)
+        desc = src.descriptions[band - 1] if src.descriptions else None
+        small = _from_rasterio(src, data, band, name or desc or Path(path.name).stem, scale)
+        v = small.valid()
+        rng = f", {v.min():.4g} … {v.max():.4g}" if v.size else ""
+        return Probe(
+            preview=small,
+            summary=(
+                f"raster {src.height}×{src.width} @ {abs(src.transform.a):g}{rng} · "
+                f"band {band} of {src.count} · {crs_label(small.crs)}"
+            ),
+            meta={
+                "shape": [src.height, src.width],
+                "cell": abs(src.transform.a),
+                "bands": list(range(1, src.count + 1)),
+                "crs": crs_label(small.crs),
+            },
+        )
+
+
+@node(category="Output", title="Save GeoTIFF")
+def save_geotiff(raster: Raster, ctx: RunContext, filename: str = "raster.tif") -> Path:
+    """Write a raster as a compressed GeoTIFF (float32, NaN as no-data) into
+    this run's output folder."""
+    rasterio = _rasterio()
+    from rasterio.transform import from_origin
+
+    if not filename.lower().endswith((".tif", ".tiff")):
+        filename += ".tif"
+    out = ctx.path(filename)
+    profile = {
+        "driver": "GTiff",
+        "height": raster.rows,
+        "width": raster.cols,
+        "count": 1,
+        "dtype": "float32",
+        "nodata": np.nan,
+        "crs": raster.crs,
+        "transform": from_origin(raster.x0, raster.y0, raster.cell, raster.cell),
+        "compress": "deflate",
+    }
+    with rasterio.open(out, "w", **profile) as dst:
+        dst.write(raster.data.astype(np.float32), 1)
+        if raster.name:
+            dst.set_band_description(1, raster.name)
     ctx.log(f"Wrote {out.name}")
     return out
 

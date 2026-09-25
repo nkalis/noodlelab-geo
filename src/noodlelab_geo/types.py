@@ -28,6 +28,7 @@ from noodlelab import (
     register_sampler,
     register_type,
 )
+from noodlelab.core.codecs import split_attrs, with_attrs
 from noodlelab.core.meta import numeric_columns
 
 GDF = "geopandas.geodataframe.GeoDataFrame"
@@ -315,8 +316,9 @@ def _gdf_meta(gdf: gpd.GeoDataFrame) -> dict[str, Any]:
 
 
 def _save_gdf(gdf: gpd.GeoDataFrame, fh: IO[bytes]) -> dict[str, Any]:
-    if type(gdf) is not gpd.GeoDataFrame or gdf.attrs:
+    if type(gdf) is not gpd.GeoDataFrame:
         raise TypeError("only plain GeoDataFrames are stored as GeoParquet")
+    gdf, info = split_attrs(gdf)  # units and metadata (noodlelab.core.about) go beside it
     buf = io.BytesIO()
     gdf.to_parquet(buf)
     data = buf.getvalue()
@@ -325,11 +327,13 @@ def _save_gdf(gdf: gpd.GeoDataFrame, fh: IO[bytes]) -> dict[str, Any]:
 
     assert_geodataframe_equal(back, gdf, check_less_precise=False)
     fh.write(data)
-    return {"crs": json.dumps(crs_string(gdf.crs))}
+    return {"crs": json.dumps(crs_string(gdf.crs)), **info}
 
 
 def _load_gdf(fh: IO[bytes], info: dict[str, Any]) -> gpd.GeoDataFrame:
-    return gpd.read_parquet(io.BytesIO(fh.read()))
+    gdf = gpd.read_parquet(io.BytesIO(fh.read()))
+    gdf.attrs = {}
+    return with_attrs(gdf, info)
 
 
 register_type(GDF, "GEODATAFRAME", "#4fb6d9", "Vector features with a CRS (GeoPandas)")
