@@ -581,14 +581,37 @@ def _cell_index(raster: Raster, pts: gpd.GeoDataFrame) -> tuple[np.ndarray, np.n
     return row, col, ok
 
 
+def _polygon_cells(raster: Raster, geometry: Any) -> tuple[slice, slice, np.ndarray] | None:
+    """The window of rows and columns around the geometry, and which of its
+    cells have their centre in it (None when no cell centre can be)."""
+    w, s, e, n = geometry.bounds
+    if not np.isfinite([w, s, e, n]).all():  # an empty geometry
+        return None
+    # a cell wider than the exact range, so rounding cannot drop an edge cell;
+    # the centres are then tested exactly as over the whole grid
+    c0 = max(int(np.floor((w - raster.x0) / raster.cell - 0.5)) - 1, 0)
+    c1 = min(int(np.ceil((e - raster.x0) / raster.cell - 0.5)) + 2, raster.cols)
+    r0 = max(int(np.floor((raster.y0 - n) / raster.cell - 0.5)) - 1, 0)
+    r1 = min(int(np.ceil((raster.y0 - s) / raster.cell - 0.5)) + 2, raster.rows)
+    if c0 >= c1 or r0 >= r1:
+        return None
+    xs, ys = np.meshgrid(
+        raster.x0 + (np.arange(c0, c1) + 0.5) * raster.cell,
+        raster.y0 - (np.arange(r0, r1) + 0.5) * raster.cell,
+    )
+    inside = (xs >= w) & (xs <= e) & (ys >= s) & (ys <= n)
+    if inside.any():
+        inside[inside] = shapely.contains_xy(geometry, xs[inside], ys[inside])
+    return slice(r0, r1), slice(c0, c1), inside
+
+
 def _polygon_mask(raster: Raster, geometry: Any) -> np.ndarray:
     """True for cells whose centre lies in the geometry."""
-    xs, ys = raster.centers()
-    w, s, e, n = geometry.bounds
     inside = np.zeros(raster.data.shape, dtype=bool)
-    box = (xs >= w) & (xs <= e) & (ys >= s) & (ys <= n)
-    if box.any():
-        inside[box] = shapely.contains_xy(geometry, xs[box], ys[box])
+    cells = _polygon_cells(raster, geometry)
+    if cells is not None:
+        rows, cols, window = cells
+        inside[rows, cols] = window
     return inside
 
 
@@ -638,6 +661,9 @@ def _grid_for(
     )
 
 
+_IDW_CHUNK = 1 << 20  # neighbour distances held at once
+
+
 @node(category="Geo/Raster", title="IDW Interpolation", converter=True, cost=3.0)
 def idw_interpolation(
     points: gpd.GeoDataFrame,
@@ -674,15 +700,22 @@ def idw_interpolation(
         raise ValueError("No points with a value")
     grid = _grid_for(pts, cell, padding, template)
     xs, ys = grid.centers()
+    xs, ys = xs.ravel(), ys.ravel()
     k = min(neighbours, len(v))
-    dist, idx = cKDTree(xy).query(np.column_stack([xs.ravel(), ys.ravel()]), k=k)
-    if k == 1:
-        dist, idx = dist[:, None], idx[:, None]
-    with np.errstate(divide="ignore", invalid="ignore"):
-        w = 1.0 / np.power(dist, power)
-        est = np.sum(w * v[idx], axis=1) / np.sum(w, axis=1)
-    exact = dist[:, 0] == 0  # a cell centre on a point takes its value
-    est[exact] = v[idx[exact, 0]]
+    tree = cKDTree(xy)
+    est = np.empty(xs.size)
+    step = max(1, _IDW_CHUNK // k)  # cells per query: bounds the k-wide arrays
+    for a in range(0, xs.size, step):
+        b = min(a + step, xs.size)
+        dist, idx = tree.query(np.column_stack([xs[a:b], ys[a:b]]), k=k)
+        if k == 1:
+            dist, idx = dist[:, None], idx[:, None]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            w = 1.0 / np.power(dist, power)
+            part = np.sum(w * v[idx], axis=1) / np.sum(w, axis=1)
+        exact = dist[:, 0] == 0  # a cell centre on a point takes its value
+        part[exact] = v[idx[exact, 0]]
+        est[a:b] = part
     return grid.like(est.reshape(grid.data.shape), name or value)
 
 
@@ -765,11 +798,13 @@ def zonal_statistics(
     rows = []
     class_names = list(raster.categories)
     for geom in z.geometry:
-        inside = (
-            _polygon_mask(raster, geom) if geom is not None else np.zeros(raster.data.shape, bool)
-        )
-        v = raster.data[inside]
-        v = v[np.isfinite(v)]
+        cells = _polygon_cells(raster, geom) if geom is not None else None
+        if cells is None:
+            v = np.empty(0)
+        else:
+            r, c, window = cells
+            v = raster.data[r, c][window]  # row-major, as over the whole grid
+            v = v[np.isfinite(v)]
         row: dict[str, float] = {}
         if categories and class_names:
             for i, cls in enumerate(class_names):
