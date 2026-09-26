@@ -19,16 +19,9 @@ for a projected CRS first.
 
 from __future__ import annotations
 
-try:
-    import geopandas  # noqa: F401
-    import matplotlib  # noqa: F401
-    import pyproj  # noqa: F401
-    import scipy  # noqa: F401
-    import shapely  # noqa: F401
-except ImportError as exc:  # shown in the editor's pack errors
-    raise ImportError(
-        f'{exc.name} is not installed. Install the geo extra: uv pip install "noodlelab[geo]"'
-    ) from exc
+from noodlelab.tiers import require
+
+require("geo", "geopandas", "matplotlib", "pyproj", "scipy", "shapely")
 
 from .plot import *  # noqa: F403
 from .raster import *  # noqa: F403
