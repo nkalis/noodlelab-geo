@@ -186,10 +186,14 @@ PREVIEW_SIDE = 512  # cells along the longer side of a probe's preview
 def _rasterio() -> Any:
     try:
         import rasterio
-    except ImportError as exc:
+    except ModuleNotFoundError as exc:
         raise ImportError(
             'Reading GeoTIFFs needs rasterio: uv pip install "noodlelab[geo]"'
         ) from exc
+    except ImportError as exc:
+        # Installed but broken, usually a system library GDAL links against is
+        # missing: telling people to install it again would send them in circles.
+        raise ImportError(f"rasterio is installed but could not be loaded: {exc}") from exc
     return rasterio
 
 
