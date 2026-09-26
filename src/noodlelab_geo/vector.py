@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import ast
-import re
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -14,6 +12,7 @@ import pyproj
 
 from noodlelab import FileRef, Param, Probe, Quantity, RunContext, node, warning
 
+from .. import _expr as expr
 from .types import coordinate_columns, crs_label, geometry_types, metric
 
 __all__ = [
@@ -65,11 +64,6 @@ def _crs_problem(text: str, allow_utm: bool = False) -> str | None:
 
 def _metres(distance: Quantity | float) -> float:
     return float(distance.m_as("m")) if hasattr(distance, "m_as") else float(distance)
-
-
-def _parse_condition(condition: str) -> None:
-    # backquoted column names may hold spaces or symbols that are not Python
-    ast.parse(re.sub(r"`[^`]*`", "x", condition), mode="eval")
 
 
 # --- reading and writing --------------------------------------------------------------------
@@ -240,19 +234,14 @@ def filter_features(
     ] = "",
 ) -> gpd.GeoDataFrame:
     """Keep the features matching a condition on their attributes."""
-    _parse_condition(condition)
+    names = [*map(str, data.columns), "index"]
+    expr.require(condition, functions=expr.MATH_FUNCTIONS, names=names, what="condition")
     return data.query(condition, engine="python").reset_index(drop=True)
 
 
 @filter_features.check
 def _check_filter(condition: str = ""):
-    if not condition.strip():
-        return "Enter a condition"
-    try:
-        _parse_condition(condition)
-    except SyntaxError as exc:
-        return f"Not a valid condition: {exc.msg}"
-    return None
+    return expr.problem(condition, functions=expr.MATH_FUNCTIONS, what="condition")
 
 
 @node(category="Geo/Vector")
