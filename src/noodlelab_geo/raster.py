@@ -209,10 +209,11 @@ def _band_problem(src: Any, band: int) -> str | None:
 
 
 def _from_rasterio(src: Any, data: Any, band: int, name: str, scale: float = 1.0) -> Raster:
-    data = np.asarray(data, dtype=np.float64)
-    nodata = src.nodatavals[band - 1]
-    if nodata is not None and not np.isnan(nodata):
-        data[np.isclose(data, nodata)] = np.nan
+    raw = np.asarray(data)
+    missing = _no_data(raw, src.nodatavals[band - 1])
+    data = raw.astype(np.float64)
+    if missing is not None:
+        data[missing] = np.nan
     data[~np.isfinite(data)] = np.nan
     t = src.transform
     x0, y0, cell = t.c, t.f, abs(t.a) * scale
@@ -220,6 +221,23 @@ def _from_rasterio(src: Any, data: Any, band: int, name: str, scale: float = 1.0
         data, y0 = data[::-1], t.f + t.e * src.height
     crs = crs_string(src.crs.to_wkt()) if src.crs else None
     return Raster(data, float(x0), float(y0), float(cell), crs, name)
+
+
+def _no_data(raw: np.ndarray, nodata: float | None) -> np.ndarray | None:
+    """The cells holding the band's no-data value exactly, compared in the
+    band's own type: a float32 band stores -3.4e38 as the nearest float32,
+    and np.isclose would also take real values near the no-data value (all
+    values within 1e-8 of a no-data value of 0, say) as missing."""
+    if nodata is None or np.isnan(nodata):
+        return None  # NaN cells become NaN anyway
+    if raw.dtype.kind == "f":
+        return raw == np.asarray(nodata).astype(raw.dtype)
+    if raw.dtype.kind in "iu" and float(nodata).is_integer():
+        info = np.iinfo(raw.dtype)
+        if info.min <= nodata <= info.max:
+            return raw == int(nodata)
+        return None  # a value the band cannot hold: no cell has it
+    return raw == nodata
 
 
 @node(category="Geo/Raster", title="Read Raster", converter=True)
