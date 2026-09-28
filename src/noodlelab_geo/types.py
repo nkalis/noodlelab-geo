@@ -32,8 +32,7 @@ from noodlelab import (
     register_sampler,
     register_type,
 )
-from noodlelab.core.codecs import split_attrs, with_attrs
-from noodlelab.core.meta import numeric_columns
+from noodlelab.plugin.tables import numeric_columns, split_attrs, with_attrs
 
 GDF = "geopandas.geodataframe.GeoDataFrame"
 

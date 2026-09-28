@@ -1,0 +1,6 @@
+name = "geo"
+title = "Geospatial"
+description = "Vector and raster data, map plots, GPS tracks and seismology"
+api = 1
+homepage = "https://github.com/nkalis/noodlelab"
+license = "MIT"

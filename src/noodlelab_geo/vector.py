@@ -11,8 +11,8 @@ import pandas as pd
 import pyproj
 
 from noodlelab import FileRef, Param, Probe, Quantity, RunContext, node, warning
+from noodlelab.plugin import expr
 
-from .. import _expr as expr
 from .types import coordinate_columns, crs_label, geometry_types, metric
 
 __all__ = [

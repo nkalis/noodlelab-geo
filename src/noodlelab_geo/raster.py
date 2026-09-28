@@ -16,7 +16,7 @@ import shapely
 from numpy.typing import NDArray
 
 from noodlelab import FileRef, Param, Probe, RunContext, node, warning
-from noodlelab.core.meta import numeric_columns
+from noodlelab.plugin.tables import numeric_columns
 
 from .types import (
     X_NAMES,

@@ -19,7 +19,7 @@ for a projected CRS first.
 
 from __future__ import annotations
 
-from noodlelab.tiers import require
+from noodlelab.plugin import require
 
 require("geo", "geopandas", "matplotlib", "pyproj", "scipy", "shapely")
 
