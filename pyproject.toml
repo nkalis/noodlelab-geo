@@ -1,7 +1,7 @@
 [project]
 name = "noodlelab-geo"
 # its own version: plugins are versioned as a whole (see docs/plugins/writing.md)
-version = "1.0.0"
+dynamic = ["version"]  # from the git tag
 description = "Geospatial: vector and raster data, maps, GPS tracks and seismology"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,8 +29,11 @@ Documentation = "https://nkalis.github.io/noodlelab/"
 geo = "noodlelab_geo"
 
 [build-system]
-requires = ["hatchling>=1.26"]
+requires = ["hatchling>=1.26", "hatch-vcs>=0.4"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/noodlelab_geo"]
