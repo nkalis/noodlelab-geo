@@ -22,7 +22,7 @@ jobs:
       - run: uv venv && uv pip install -e . pytest
       - run: uv run noodlelab check-plugin .
       - run: uv run noodlelab plugins test geo
-      - run: uv run pytest -q
+      - run: if [ -d tests ]; then uv run pytest -q; fi  # a plugin may have no tests of its own
 
   release:
     needs: check
